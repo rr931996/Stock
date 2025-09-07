@@ -75,7 +75,12 @@ async function fetchStockData(symbol) {
   }
 }
 
-// Routes
+// ------------------ ROUTES ------------------
+
+// Root route - simple welcome message
+app.get("/", (req, res) => {
+  res.send("<h2>🚀 API Server is running successfully on port 3000</h2>");
+});
 
 // Fetch all stock data from DB
 app.get("/api/db/stocks", async (req, res) => {
@@ -157,6 +162,8 @@ app.get("/api/stocks/list", (req, res) => {
   }
 });
 
+// ------------------ CRON JOB ------------------
+
 // Cron job – refresh stocks daily at 9:30 PM IST
 cron.schedule("30 15 * * *", async () => {
   console.log("⏳ Refreshing all stock data sequentially...");
@@ -166,5 +173,5 @@ cron.schedule("30 15 * * *", async () => {
   console.log("🎉 All stock data refreshed by cron!");
 });
 
-// Start server
+// ------------------ START SERVER ------------------
 app.listen(3000, () => console.log("🚀 API running at http://localhost:3000"));
