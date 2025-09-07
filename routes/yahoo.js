@@ -3,7 +3,7 @@ const fetchStockData = require("../lib/fetchStock");
 
 const router = express.Router();
 
-// GET live stock from Yahoo Finance and store in DB
+// GET live stock from Yahoo and store in DB
 router.get("/:symbol", async (req, res) => {
   try {
     const { symbol } = req.params;

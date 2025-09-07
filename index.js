@@ -11,11 +11,16 @@ app.use(cors());
 app.use(express.json());
 
 // Connect to MongoDB
-connectDB().then(() => console.log("✅ MongoDB connected"));
+connectDB()
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => {
+    console.error("Cannot start server without DB connection:", err);
+    process.exit(1);
+  });
 
 // Routes
 app.use("/api/yahoo", yahooRoute);  // live fetch
-app.use("/api/stocks", stockRoute); // DB fetch
+app.use("/api/stocks", stockRoute); // DB fetch + delete
 
 app.get("/", (req, res) => {
   res.send("<h2>🚀 Stock API running</h2>");
