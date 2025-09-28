@@ -5,7 +5,11 @@ const cors = require("cors");
 const yahooRoute = require("./routes/yahoo");
 
 const app = express();
-app.use(cors());
+const corsOptions = {
+  origin: 'https://stockadi.netlify.app',
+  optionsSuccessStatus: 200 // For legacy browser support
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Routes
