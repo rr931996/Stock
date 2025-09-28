@@ -1,10 +1,2 @@
-const mongoose = require("mongoose");
-
-const stockSchema = new mongoose.Schema({
-  symbol: String,
-  date: Date,
-  high: Number,
-  low: Number,
-});
-
-module.exports = mongoose.models.Stock || mongoose.model("Stock", stockSchema);
+// This file is no longer needed as the application is now stateless
+// and does not connect to a database. You can safely delete it.
