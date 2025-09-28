@@ -6,7 +6,7 @@ const yahooRoute = require("./routes/yahoo");
 
 const app = express();
 const corsOptions = {
-  origin: 'https://stock-app-6gu.pages.dev',
+  origin: ['https://stock-app-6gu.pages.dev', 'http://localhost:3000'],
   optionsSuccessStatus: 200 // For legacy browser support
 };
 app.use(cors(corsOptions));
