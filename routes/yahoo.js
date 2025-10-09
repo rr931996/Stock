@@ -23,6 +23,30 @@ function handleApiError(err, res, symbol) {
   res.status(500).json({ error: "An internal server error occurred." });
 }
 
+/**
+ * Wraps an async function with retry logic and exponential backoff.
+ * @param {Function} fn The async function to call.
+ * @param {Array} args Arguments to pass to the function.
+ * @param {number} maxRetries Maximum number of retries.
+ * @param {number} initialDelay Initial delay in ms for backoff.
+ * @returns {Promise<any>}
+ */
+async function fetchWithRetry(fn, args, maxRetries = 3, initialDelay = 1000) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn(...args);
+    } catch (err) {
+      if (err.message?.includes("Too Many Requests") && attempt < maxRetries - 1) {
+        const delay = initialDelay * Math.pow(2, attempt);
+        console.warn(`Rate limit hit for ${args[0]}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`);
+        await sleep(delay);
+      } else {
+        throw err; // Re-throw if not a rate limit error or if retries are exhausted.
+      }
+    }
+  }
+}
+
 // POST /api/yahoo/prices
 router.post("/prices", async (req, res) => {
   const { symbols } = req.body;
@@ -49,7 +73,8 @@ router.post("/prices", async (req, res) => {
   try {
     let fetchedData = [];
     if (symbolsToFetch.length > 0) {
-      const results = await getCurrentPrice(symbolsToFetch);
+      // Use the retry wrapper for the API call.
+      const results = await fetchWithRetry(getCurrentPrice, [symbolsToFetch]);
       fetchedData = Array.isArray(results) ? results : [results];
 
       // 3. Cache the new results
@@ -85,11 +110,10 @@ router.post("/historical", async (req, res) => {
 
   for (const symbol of uniqueSymbols) {
     try {
-      // fetchStockData now uses the cache internally
-      const data = await fetchStockData(symbol);
+      // Use the retry wrapper for the API call.
+      // fetchStockData already uses the cache, so this only retries on cache misses.
+      const data = await fetchWithRetry(fetchStockData, [symbol]);
       allData.push(...data);
-      // Always sleep to ensure we never hit the API too fast, even with a mix of cached/uncached requests.
-      await sleep(API_DELAY_MS);
     } catch (err) {
       errors.push({ symbol, error: err.message });
       // If we hit a rate limit, stop processing to avoid making it worse.
@@ -99,6 +123,9 @@ router.post("/historical", async (req, res) => {
       }
     }
   }
+
+  // The original sleep is removed from the loop as the retry logic now handles delays on failure.
+  // You could keep a smaller, consistent delay here if you want to be extra cautious even on successful calls.
 
   res.json({ source: "Yahoo Finance Bulk", data: allData, errors });
 });
