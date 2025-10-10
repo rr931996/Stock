@@ -14,11 +14,11 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "lru-cache": "^10.4.3",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "xlsx": "^0.18.5",
-    "yahoo-finance2": "^2.13.3",
-    "lru-cache": "^10.2.2"
+    "yahoo-finance2": "^2.13.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
