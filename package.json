@@ -15,6 +15,7 @@
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
+    "https-proxy-agent": "^7.0.6",
     "lru-cache": "^10.4.3",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
