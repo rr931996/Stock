@@ -21,7 +21,10 @@ async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCou
   const MAX_RETRIES = 5; // Increased from 3
   const BASE_DELAY_MS = 2000; // Increased from 500ms
 
-  if (err.message && err.message.includes("Too Many Requests") && retryCount < MAX_RETRIES) {
+  const isRateLimitError = err.message && 
+    (err.message.includes("Too Many Requests") || err.message.includes("429"));
+
+  if (isRateLimitError && retryCount < MAX_RETRIES) {
     const delay = BASE_DELAY_MS * Math.pow(2, retryCount) + Math.random() * 500; // Exponential backoff with more jitter
     console.log(`[RETRY] Rate limit hit. Retrying (${retryCount + 1}/${MAX_RETRIES}) for ${symbol} after ${delay.toFixed(0)}ms...`);
     await new Promise(resolve => setTimeout(resolve, delay));
