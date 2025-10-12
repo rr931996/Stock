@@ -17,11 +17,28 @@ const apiLimiter = rateLimit({
 /**
  * Generic error handler for API routes.
  */
-function handleApiError(err, res, symbol) {
-  if (err.message && err.message.includes("Too Many Requests")) {
-    return res
-      .status(429)
-      .json({ error: "Rate limit hit. Please try again later." });
+async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCount = 0) {
+  const MAX_RETRIES = 5; // Increased from 3
+  const BASE_DELAY_MS = 2000; // Increased from 500ms
+
+  if (err.message && err.message.includes("Too Many Requests") && retryCount < MAX_RETRIES) {
+    const delay = BASE_DELAY_MS * Math.pow(2, retryCount) + Math.random() * 500; // Exponential backoff with more jitter
+    console.log(`[RETRY] Rate limit hit. Retrying (${retryCount + 1}/${MAX_RETRIES}) for ${symbol} after ${delay.toFixed(0)}ms...`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      const result = await fetchFunction(symbols);
+      // Handle both possible return shapes: array from getCurrentPrice, object from fetchStockData
+      const data = result.data || result;
+      const errors = result.errors || [];
+
+      const responsePayload = { source: "Yahoo Finance (after retry)", data, errors };
+      console.log(
+        `✅  [${new Date().toISOString()}] Sending successful retry response for ${symbol}:\n`, JSON.stringify(responsePayload, null, 2)
+      );
+      return res.json(responsePayload);
+    } catch (retryErr) {
+      return handleApiError(retryErr, res, symbol, fetchFunction, symbols, retryCount + 1);
+    }
   }
   if (err.name === "YFError") {
     return res
@@ -29,7 +46,7 @@ function handleApiError(err, res, symbol) {
       .json({ error: `Invalid symbol or no data found for: ${symbol}` });
   }
   console.error(`Error processing ${symbol || "request"}:`, err);
-  res.status(500).json({ error: "An internal server error occurred." });
+  res.status(500).json({ error: "An internal server error occurred.", details: err.message });
 }
 
 // POST /api/yahoo/prices
@@ -59,10 +76,14 @@ router.post("/prices", apiLimiter, async (req, res) => {
       console.log(`[CACHE HIT] for symbols: ${cacheHits.join(", ")}`);
     }
 
-    res.json({ source: "Yahoo Finance", data: results });
+    const responsePayload = { source: "Yahoo Finance", data: results };
+    console.log(
+      `✅  [${new Date().toISOString()}] Sending /prices response:\n`, JSON.stringify(responsePayload, null, 2)
+    );
+    res.json(responsePayload);
   } catch (err) {
     const symbolString = Array.isArray(uniqueSymbols) ? uniqueSymbols.join(", ") : uniqueSymbols;
-    handleApiError(err, res, symbolString);
+    handleApiError(err, res, symbolString, getCurrentPrice, uniqueSymbols);
   }
 });
 
@@ -92,13 +113,17 @@ router.post("/historical", async (req, res) => {
     // and returns a flat array of all historical data points.
     // fetchStockData now returns an object { data, errors }
     const { data, errors } = await fetchStockData(uniqueSymbols);
-    res.json({ source: "Yahoo Finance Bulk", data, errors });
+    const responsePayload = { source: "Yahoo Finance Bulk", data, errors };
+    console.log(
+      `✅  [${new Date().toISOString()}] Sending /historical response:\n`, JSON.stringify(responsePayload, null, 2)
+    );
+    res.json(responsePayload);
   } catch (err) {
     // If the fetchStockData function itself throws a major error (like a full timeout),
     // this will catch it.
     // The generic error handler can now handle batch failures.
-    // We pass the array of symbols that failed.
-    handleApiError(err, res, uniqueSymbols.join(", "));
+    // We pass the array of symbols that failed and the function to retry.
+    handleApiError(err, res, uniqueSymbols.join(", "), fetchStockData, uniqueSymbols);
   }
 });
 
