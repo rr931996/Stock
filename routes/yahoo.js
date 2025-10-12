@@ -35,9 +35,7 @@ async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCou
       const errors = result.errors || [];
 
       const responsePayload = { source: "Yahoo Finance (after retry)", data, errors };
-      console.log(
-        `✅  [${new Date().toISOString()}] Sending successful retry response for ${symbol}:\n`, JSON.stringify(responsePayload, null, 2)
-      );
+
       return res.json(responsePayload);
     } catch (retryErr) {
       return handleApiError(retryErr, res, symbol, fetchFunction, symbols, retryCount + 1);
@@ -54,10 +52,7 @@ async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCou
 
 // POST /api/yahoo/prices
 router.post("/prices", apiLimiter, async (req, res) => {
-  console.log(
-    `➡️  [${new Date().toISOString()}] Received /prices request with symbols:`,
-    req.body.symbols
-  );
+
   const { symbols } = req.body;
   if (!Array.isArray(symbols) || symbols.length === 0) {
     return res
@@ -80,9 +75,7 @@ router.post("/prices", apiLimiter, async (req, res) => {
     }
 
     const responsePayload = { source: "Yahoo Finance", data: results };
-    console.log(
-      `✅  [${new Date().toISOString()}] Sending /prices response:\n`, JSON.stringify(responsePayload, null, 2)
-    );
+  
     res.json(responsePayload);
   } catch (err) {
     const symbolString = Array.isArray(uniqueSymbols) ? uniqueSymbols.join(", ") : uniqueSymbols;
@@ -92,10 +85,7 @@ router.post("/prices", apiLimiter, async (req, res) => {
 
 // POST /api/yahoo/historical
 router.post("/historical", async (req, res) => {
-  console.log(
-    `➡️  [${new Date().toISOString()}] Received /historical request with symbols:`,
-    req.body.symbols
-  );
+
   const { symbols } = req.body;
 
   if (!Array.isArray(symbols) || symbols.length === 0) {
@@ -117,9 +107,7 @@ router.post("/historical", async (req, res) => {
     // fetchStockData now returns an object { data, errors }
     const { data, errors } = await fetchStockData(uniqueSymbols);
     const responsePayload = { source: "Yahoo Finance Bulk", data, errors };
-    console.log(
-      `✅  [${new Date().toISOString()}] Sending /historical response:\n`, JSON.stringify(responsePayload, null, 2)
-    );
+
     res.json(responsePayload);
   } catch (err) {
     // If the fetchStockData function itself throws a major error (like a full timeout),
