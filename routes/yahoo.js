@@ -1,18 +1,9 @@
 const express = require("express");
-const rateLimit = require("express-rate-limit");
 const { fetchStockData, getCurrentPrice } = require("../lib/fetchStock");
 const cache = require("../lib/cache");
+const { yahooFinance } = require("../lib/yahoo-finance-client");
 
 const router = express.Router();
-
-// Apply a rate limiter to all requests to this router
-// This helps prevent abuse and reduces the chance of hitting upstream rate limits.
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-});
 
 /**
  * Generic error handler for API routes.
@@ -26,6 +17,10 @@ async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCou
 
   if (isRateLimitError && retryCount < MAX_RETRIES) {
     const delay = BASE_DELAY_MS * Math.pow(2, retryCount) + Math.random() * 500; // Exponential backoff with more jitter
+    
+    // Clear the internal crumb cache in yahoo-finance2 to force re-fetching on retry
+    await yahooFinance._clearCrumb();
+
     console.log(`[RETRY] Rate limit hit. Retrying (${retryCount + 1}/${MAX_RETRIES}) for ${symbol} after ${delay.toFixed(0)}ms...`);
     await new Promise(resolve => setTimeout(resolve, delay));
     try {
@@ -51,7 +46,7 @@ async function handleApiError(err, res, symbol, fetchFunction, symbols, retryCou
 }
 
 // POST /api/yahoo/prices
-router.post("/prices", apiLimiter, async (req, res) => {
+router.post("/prices", async (req, res) => {
 
   const { symbols } = req.body;
   if (!Array.isArray(symbols) || symbols.length === 0) {
@@ -67,11 +62,12 @@ router.post("/prices", apiLimiter, async (req, res) => {
     const results = await getCurrentPrice(uniqueSymbols);
 
     // Log cache hits for observability
+    // Note: The cache key format must match the one used in `getCurrentPrice`.
     const cacheHits = uniqueSymbols.filter(
-      (symbol) => cache.get(`price_${symbol}`) !== undefined
+      (symbol) => cache.get(`price:${symbol}`) !== undefined
     );
     if (cacheHits.length > 0) {
-      console.log(`[CACHE HIT] for symbols: ${cacheHits.join(", ")}`);
+      console.log(`[CACHE] Hit for symbols: ${cacheHits.join(", ")}`);
     }
 
     const responsePayload = { source: "Yahoo Finance", data: results };
@@ -96,14 +92,7 @@ router.post("/historical", async (req, res) => {
 
   const uniqueSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
 
-  // Refactor: Fetch all historical data in a single batch request
-  // instead of looping. This is much more efficient and reduces API calls.
-  // The `fetchStockData` function would need to be adapted to handle an array of symbols
-  // and manage its internal caching logic accordingly.
-  // For now, let's assume `fetchStockData` is updated to accept an array.
   try {
-    // Assuming fetchStockData is modified to accept an array of symbols
-    // and returns a flat array of all historical data points.
     // fetchStockData now returns an object { data, errors }
     const { data, errors } = await fetchStockData(uniqueSymbols);
     const responsePayload = { source: "Yahoo Finance Bulk", data, errors };
