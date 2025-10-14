@@ -1,8 +1,37 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const yahooRoute = require("./routes/yahoo");
+
+// --- DIAGNOSTIC FUNCTION ---
+async function runProxyDiagnostic() {
+  console.log("[DIAGNOSTIC] Running proxy check...");
+  const PROXY_HOST = process.env.PROXY_HOST;
+  const PROXY_PORT = process.env.PROXY_PORT;
+  const PROXY_USERNAME = process.env.PROXY_USERNAME;
+  const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
+
+  if (!PROXY_HOST || !PROXY_PORT || !PROXY_USERNAME || !PROXY_PASSWORD) {
+    console.log("[DIAGNOSTIC] Proxy environment variables not set. Skipping proxy check.");
+    return;
+  }
+
+  try {
+    const proxyUrl = `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
+    const agent = new HttpsProxyAgent(proxyUrl);
+    const response = await fetch("https://httpbin.org/ip", { agent });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log(`[DIAGNOSTIC] Proxy is active. Outgoing IP address: ${data.origin}`);
+  } catch (error) {
+    console.error("[DIAGNOSTIC] Error during proxy check:", error.message);
+    console.error("[DIAGNOSTIC] This may indicate a problem with the proxy server or network configuration.");
+  }
+}
 
 const app = express();
 
@@ -25,4 +54,8 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
+
+// Run diagnostics before starting the server
+runProxyDiagnostic().then(() => {
+  app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
+});
