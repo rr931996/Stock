@@ -4,6 +4,8 @@ const cors = require("cors");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const yahooRoute = require("./routes/yahoo");
+const upstoxRoute = require("./routes/upstox");
+const strategyRoute = require("./routes/strategy");
 
 // --- DIAGNOSTIC FUNCTION ---
 async function runProxyDiagnostic() {
@@ -48,12 +50,21 @@ app.use(express.json());
 
 // Routes
 app.use("/api/yahoo", yahooRoute);  // live fetch
+app.use("/api/upstox", upstoxRoute); // Upstox options data
+app.use("/api/strategy", strategyRoute); // Strategy management
 
 app.get("/", (req, res) => {
+  const code = req.query.code;
+  
+  // Handle Upstox OAuth callback
+  if (code) {
+    return res.redirect(`/api/upstox/auth-callback?code=${code}`);
+  }
+  
   res.send("<h2>🚀 Stock API running</h2>");
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Run diagnostics before starting the server
 runProxyDiagnostic().then(() => {
