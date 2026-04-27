@@ -32,7 +32,7 @@ router.get("/auth-url", (req, res) => {
   try {
     const client = getUpstoxClient();
     const loginUrl = client.getLoginUrl();
-    
+
     res.json({
       message: "Visit this URL to authenticate with Upstox",
       loginUrl,
@@ -40,7 +40,7 @@ router.get("/auth-url", (req, res) => {
     });
   } catch (err) {
     console.error("[Upstox] Auth URL generation failed:", err.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to generate login URL",
       details: err.message,
       setup: "Please set UPSTOX_API_KEY environment variable"
@@ -56,7 +56,7 @@ router.get("/authorize", (req, res) => {
     res.redirect(loginUrl);
   } catch (err) {
     console.error("[Upstox] Authorization redirect failed:", err.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Authorization failed",
       details: err.message
     });
@@ -94,10 +94,10 @@ router.get("/auth-callback", async (req, res) => {
     }
 
     fs.writeFileSync(envPath, envContent);
-    
+
     // Update process.env
     process.env.UPSTOX_ACCESS_TOKEN = tokenData.accessToken;
-    
+
     console.log("[Upstox] Token saved to .env and process.env updated");
 
     res.send(`
@@ -186,7 +186,7 @@ router.post("/options-premiums", async (req, res) => {
     // Check if authenticated
     if (!client.accessToken) {
       console.warn("[Upstox] No access token available for options premiums");
-      
+
       // Return nulls until authenticated
       const emptyPremiums = strikes.reduce((acc, item) => {
         acc[`${item.type}:${item.strike}`] = null;
@@ -204,11 +204,11 @@ router.post("/options-premiums", async (req, res) => {
 
     // Fetch option data from Upstox API (real prices)
     console.log(`[Upstox] Fetching option data for ${symbol} on ${expiryDate}`);
-    
+
     let optionsAvailable = false;
     let hasRealData = false;
     const premiums = {};
-    
+
     // Initialize premiums with nulls for all requested strikes
     strikes.forEach(item => {
       premiums[`${item.type}:${item.strike}`] = null;
@@ -226,7 +226,7 @@ router.post("/options-premiums", async (req, res) => {
       if (contractsResponse.wasExpiryAdjusted) {
         console.log(`[Upstox] ⚠️  Requested ${expiryDate} not available, using ${contractsResponse.actualExpiryDate}`);
       }
-      
+
       if (contractsResponse?.status === 'success' && Array.isArray(contractsResponse.data)) {
         const contracts = contractsResponse.data;
         console.log(`[Upstox] Received ${contracts.length} contracts with prices from API`);
@@ -238,7 +238,7 @@ router.post("/options-premiums", async (req, res) => {
           contracts.forEach(contract => {
             const strike = contract.strike_price;
             const type = contract.instrument_type; // 'CE' or 'PE'
-            
+
             if (contract.ltp) {
               validLtpCount++;
               const key = type === 'CE' ? 'buyCall' : 'buyPut';
@@ -277,28 +277,28 @@ router.post("/options-premiums", async (req, res) => {
     // If we don't have real data, fall back to estimation
     if (!hasRealData) {
       console.log(`[Upstox] No real data available. Using estimated premiums.`);
-      
+
       try {
         // Get current Nifty price
         const niftyQuote = await client.getNiftyQuote();
         const spotPrice = niftyQuote.price;
-        
+
         // Calculate days to expiry
         const today = new Date();
         const expiry = new Date(expiryDate);
         const daysToExpiry = Math.max(1, (expiry - today) / (1000 * 60 * 60 * 24));
         const timeDecay = Math.min(1.0, daysToExpiry / 7); // Weekly options baseline = 7 days
-        
+
         // ATM premium: 0.35% of spot for weekly options (calibrated to real Nifty market)
         const atmPremium = spotPrice * 0.0035 * timeDecay;
-        
+
         // Calculate premiums for all requested strikes
         // Realistic model based on market data for Nifty weekly options
         strikes.forEach(item => {
           const strike = Math.round(item.strike);
           const isCall = item.type.toLowerCase().includes('call');
           const moneyness = strike / spotPrice; // 1.0 = ATM
-          
+
           let premium;
           if (isCall) {
             if (moneyness <= 1.0) {
@@ -320,7 +320,7 @@ router.post("/options-premiums", async (req, res) => {
               premium = atmPremium * Math.exp(-otnessPercent / 3);
             }
           }
-          
+
           // Ensure minimum premium of 0.05 (smallest tradeable unit)
           premiums[`${item.type}:${item.strike}`] = Math.round(Math.max(0.05, premium) * 100) / 100;
           console.log(`[Upstox] Estimated ${item.type} ${strike}: ₹${premiums[`${item.type}:${item.strike}`]}`);
@@ -340,7 +340,7 @@ router.post("/options-premiums", async (req, res) => {
       fetchedAt: new Date().toISOString(),
       authenticated: true,
       optionsAvailable: optionsAvailable,
-      message: optionsAvailable 
+      message: optionsAvailable
         ? hasRealData
           ? 'Real-time premiums loaded from Upstox API'
           : 'Estimated premiums calculated (no real-time data available)'
@@ -353,7 +353,7 @@ router.post("/options-premiums", async (req, res) => {
     res.json(responsePayload);
   } catch (err) {
     console.error(`[Upstox] Error fetching option premiums for ${symbol}:`, err.message);
-    
+
     // Return nulls for all strikes when fetch fails
     const emptyPremiums = strikes.reduce((acc, item) => {
       acc[`${item.type}:${item.strike}`] = null;
@@ -377,7 +377,7 @@ router.post("/options-premiums", async (req, res) => {
 router.get("/test-contracts", async (req, res) => {
   try {
     const client = getUpstoxClient();
-    
+
     if (!client.accessToken) {
       return res.status(401).json({
         error: "Not authenticated",
@@ -459,7 +459,7 @@ router.get("/nifty", async (req, res) => {
 
   try {
     const client = getUpstoxClient();
-    
+
     if (!client.accessToken) {
       console.warn("[Upstox] No access token available for Nifty quote");
       return res.status(401).json({
@@ -475,20 +475,20 @@ router.get("/nifty", async (req, res) => {
     const niftyData = await client.getNiftyQuote();
     cache.set(cacheKey, niftyData, 5 * 60 * 1000); // Cache for 5 minutes
     console.log("[Upstox] Nifty 50 price fetched successfully");
-    
+
     res.json(niftyData);
   } catch (err) {
     console.error("[Upstox] Error fetching Nifty price:", err.message);
     console.error("[Upstox] Full error:", err);
-    
+
     // Determine appropriate status code
     const statusCode = err.response?.status === 401 ? 401 : 503;
-    
-    res.status(statusCode).json({ 
+
+    res.status(statusCode).json({
       error: "Failed to fetch Nifty 50 price from Upstox",
       details: err.message,
       authenticated: false,
-      message: statusCode === 401 
+      message: statusCode === 401
         ? "Authentication failed - please re-authenticate"
         : "Service temporarily unavailable",
       setup: "Verify Upstox API Key and that authentication is complete at /api/upstox/auth-url"
@@ -507,7 +507,7 @@ router.get("/option-expirations", async (req, res) => {
 
   try {
     const client = getUpstoxClient();
-    
+
     // Check authentication first
     if (!client.accessToken) {
       console.warn("[Upstox] No access token for option expirations");
@@ -518,20 +518,20 @@ router.get("/option-expirations", async (req, res) => {
         data: []
       });
     }
-    
+
     const expirations = await client.getOptionExpirations();
 
     cache.set(cacheKey, expirations, 60 * 60 * 1000); // Cache for 1 hour
     console.log("[Upstox] Option expirations fetched");
-    
+
     res.json(expirations);
   } catch (err) {
     console.error("[Upstox] Error fetching option expirations:", err.message);
-    
+
     // Check if it's an auth error from the API
     const statusCode = err.message.includes('401') || err.message.includes('unauthorized') ? 401 : 503;
-    
-    res.status(statusCode).json({ 
+
+    res.status(statusCode).json({
       error: "Failed to fetch option expirations",
       details: err.message,
       authenticated: false,
@@ -545,7 +545,7 @@ router.get("/option-expirations", async (req, res) => {
 router.get("/test-option", async (req, res) => {
   try {
     const client = getUpstoxClient();
-    
+
     if (!client.accessToken) {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -554,30 +554,30 @@ router.get("/test-option", async (req, res) => {
     const testFormats = [
       // Format 1: Current format with 2-digit year
       'NSE_FO|NIFTY22APR2624200CE',
-      
+
       // Format 2: With colon instead of pipe
       'NSE_FO:NIFTY22APR2624200CE',
-      
+
       // Format 3: Full year (2026)
       'NSE_FO|NIFTY22APR2624200CE',
-      
+
       // Format 4: Different date format (DDMMMYY with 4-digit year)
       'NSE_FO|NIFTY220426024200CE',
-      
+
       // Format 5: Underscore instead of pipe
       'NSE_FO_NIFTY22APR2624200CE',
-      
+
       // Format 6: Without date prefix, just strike
       'NSE_FO|NIFTY24200CE',
-      
+
       // Format 7: Year at beginning
       'NSE_FO|NIFTY2622APR24200CE',
     ];
 
     console.log("[Upstox] Testing multiple option key formats...");
-    
+
     const results = [];
-    
+
     for (const format of testFormats) {
       try {
         const response = await client.getOptionPremiums([format]);
@@ -597,11 +597,11 @@ router.get("/test-option", async (req, res) => {
         });
       }
     }
-    
+
     res.json({
       results,
-      message: results.filter(r => r.hasData).length > 0 
-        ? `Found working format(s)` 
+      message: results.filter(r => r.hasData).length > 0
+        ? `Found working format(s)`
         : 'No formats returned data - may need to try option/chain endpoint'
     });
   } catch (err) {
@@ -617,24 +617,24 @@ router.get("/test-option", async (req, res) => {
 router.get("/test-option-chain", async (req, res) => {
   try {
     const client = getUpstoxClient();
-    
+
     if (!client.accessToken) {
       return res.status(401).json({ error: "Not authenticated" });
     }
 
     console.log("[Upstox] Fetching actual option chain for Nifty...");
-    
+
     // Try to fetch option chain with different expiry formats
     const today = new Date();
     const nextWednesday = new Date(today);
     nextWednesday.setDate(today.getDate() + (3 - today.getDay() + 7) % 7 || 7);
-    
+
     const day = String(nextWednesday.getDate()).padStart(2, '0');
     const month = nextWednesday.toLocaleString('en-US', { month: 'short' }).toUpperCase();
     const year2digit = String(nextWednesday.getFullYear()).slice(-2);
     const year4digit = String(nextWednesday.getFullYear());
     const dateYYYYMMDD = nextWednesday.toISOString().split('T')[0];
-    
+
     const expiryFormats = [
       { label: 'DDMMMYY', value: `${day}${month}${year2digit}` },
       { label: 'YYYY-MM-DD', value: dateYYYYMMDD },
@@ -642,7 +642,7 @@ router.get("/test-option-chain", async (req, res) => {
     ];
 
     const chainResults = [];
-    
+
     for (const format of expiryFormats) {
       try {
         console.log(`[Upstox] Trying option chain with expiry format: ${format.label} = ${format.value}`);
@@ -658,7 +658,7 @@ router.get("/test-option-chain", async (req, res) => {
         });
 
         console.log(`[Upstox] Option chain response for ${format.label}:`, JSON.stringify(response.data).substring(0, 500));
-        
+
         let sampleInstrumentKeys = [];
         if (response.data?.data && Array.isArray(response.data.data)) {
           // Extract sample instrument keys from the response
@@ -669,7 +669,7 @@ router.get("/test-option-chain", async (req, res) => {
             putKey: item.put_options?.instrument_key
           }));
         }
-        
+
         chainResults.push({
           format: format.label,
           expiryValue: format.value,
@@ -686,7 +686,7 @@ router.get("/test-option-chain", async (req, res) => {
         });
       }
     }
-    
+
     res.json({
       chainResults,
       message: 'Use the working format and instrument keys from above'
@@ -704,17 +704,17 @@ router.get("/refresh-token", (req, res) => {
   try {
     // Read and reload .env file
     const envPath = path.join(__dirname, "../.env");
-    
+
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, "utf8");
       const envConfig = dotenv.parse(envContent);
-      
+
       // Update process.env with the latest values from .env
       Object.assign(process.env, envConfig);
-      
+
       console.log("[Upstox] Environment variables refreshed from .env file");
     }
-    
+
     // Now check the status with the refreshed environment
     const client = getUpstoxClient();
     const hasToken = !!client.accessToken;
@@ -723,13 +723,13 @@ router.get("/refresh-token", (req, res) => {
     res.json({
       authenticated: hasToken,
       hasCredentials,
-      message: hasToken 
+      message: hasToken
         ? "Upstox API is authenticated and ready to use"
         : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
     console.error("[Upstox] Error refreshing token:", err.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to refresh token",
       details: err.message
     });
@@ -746,12 +746,12 @@ router.get("/status", (req, res) => {
     res.json({
       authenticated: hasToken,
       hasCredentials,
-      message: hasToken 
+      message: hasToken
         ? "Upstox API is authenticated and ready to use"
         : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to check status",
       details: err.message
     });
@@ -761,7 +761,7 @@ router.get("/status", (req, res) => {
 // GET /api/upstox/historical
 router.get("/historical", async (req, res) => {
   const symbol = req.query.symbol || 'NSE_INDEX|Nifty 50';
-  
+
   const cacheKey = `upstox:historical:${symbol}`;
   const cached = cache.get(cacheKey);
   if (cached) {
@@ -770,7 +770,7 @@ router.get("/historical", async (req, res) => {
 
   try {
     const client = getUpstoxClient();
-    
+
     const today = new Date();
     const toDate = today.toISOString().split('T')[0];
     const fromDateObj = new Date();
@@ -778,7 +778,7 @@ router.get("/historical", async (req, res) => {
     const fromDate = fromDateObj.toISOString().split('T')[0];
 
     const data = await client.getHistoricalData(symbol, 'day', toDate, fromDate);
-    
+
     cache.set(cacheKey, data, 60 * 60 * 1000); // 1 hour cache
     res.json({ data });
   } catch (err) {
@@ -841,7 +841,7 @@ router.get("/option-chain", async (req, res) => {
 
     if (response.data?.status === 'success' && Array.isArray(response.data.data)) {
       const chainData = response.data.data;
-      
+
       console.log(`[Upstox] Received option chain with ${chainData.length} strike prices`);
 
       // Format response with additional calculations
@@ -916,11 +916,11 @@ router.get("/option-chain", async (req, res) => {
     }
   } catch (err) {
     console.error(`[Upstox] Error fetching option chain:`, err.message);
-    
+
     // Determine appropriate status code
     let statusCode = 503; // Default to service unavailable
     let message = "Service temporarily unavailable";
-    
+
     if (err.message.includes('401') || err.message.includes('Unauthorized')) {
       statusCode = 401;
       message = "Authentication failed - please re-authenticate";
@@ -928,7 +928,7 @@ router.get("/option-chain", async (req, res) => {
       statusCode = 401;
       message = "Authentication failed - please re-authenticate";
     }
-    
+
     res.status(statusCode).json({
       error: "Failed to fetch option chain from Upstox",
       details: err.message,
