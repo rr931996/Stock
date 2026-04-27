@@ -83,22 +83,27 @@ router.get("/auth-callback", async (req, res) => {
     const client = getUpstoxClient();
     const tokenData = await client.exchangeAuthorizationCode(code);
 
-    // Save token to .env file
-    const envPath = path.join(__dirname, "../.env");
-    let envContent = fs.readFileSync(envPath, "utf8");
-
-    if (envContent.match(/^UPSTOX_ACCESS_TOKEN\s*=.*/m)) {
-      envContent = envContent.replace(/^UPSTOX_ACCESS_TOKEN\s*=.*/m, `UPSTOX_ACCESS_TOKEN=${tokenData.accessToken}`);
-    } else {
-      envContent += `\nUPSTOX_ACCESS_TOKEN=${tokenData.accessToken}\n`;
-    }
-
-    fs.writeFileSync(envPath, envContent);
-
-    // Update process.env
+    // Update process.env immediately (works on both local and cloud/Render)
     process.env.UPSTOX_ACCESS_TOKEN = tokenData.accessToken;
 
-    console.log("[Upstox] Token saved to .env and process.env updated");
+    // Also persist to .env file if it exists (local development only)
+    const envPath = path.join(__dirname, "../.env");
+    if (fs.existsSync(envPath)) {
+      try {
+        let envContent = fs.readFileSync(envPath, "utf8");
+        if (envContent.match(/^UPSTOX_ACCESS_TOKEN\s*=.*/m)) {
+          envContent = envContent.replace(/^UPSTOX_ACCESS_TOKEN\s*=.*/m, `UPSTOX_ACCESS_TOKEN=${tokenData.accessToken}`);
+        } else {
+          envContent += `\nUPSTOX_ACCESS_TOKEN=${tokenData.accessToken}\n`;
+        }
+        fs.writeFileSync(envPath, envContent);
+        console.log("[Upstox] Token saved to .env and process.env updated");
+      } catch (fsErr) {
+        console.warn("[Upstox] Could not write to .env file:", fsErr.message);
+      }
+    } else {
+      console.log("[Upstox] Running in cloud environment - token saved to process.env only");
+    }
 
     res.send(`
       <html>
