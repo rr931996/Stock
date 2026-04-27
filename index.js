@@ -23,9 +23,15 @@ function setupGlobalProxy() {
   try {
     const { ProxyAgent, setGlobalDispatcher } = require("undici");
     const proxyUrl = `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
-    const proxyAgent = new ProxyAgent(proxyUrl);
+    const proxyAgent = new ProxyAgent({
+      uri: proxyUrl,
+      // Residential proxies have higher latency — extend all timeouts to 60s
+      connectTimeout: 60_000,
+      headersTimeout: 60_000,
+      bodyTimeout: 60_000,
+    });
     setGlobalDispatcher(proxyAgent);
-    console.log(`[PROXY] ✅ Global undici dispatcher set → ${PROXY_HOST}:${PROXY_PORT}`);
+    console.log(`[PROXY] ✅ Global undici dispatcher set → ${PROXY_HOST}:${PROXY_PORT} (60s timeouts)`);
   } catch (err) {
     console.error("[PROXY] ❌ Failed to set global proxy dispatcher:", err.message);
   }
