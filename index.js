@@ -1,39 +1,39 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const yahooRoute = require("./routes/yahoo");
 const upstoxRoute = require("./routes/upstox");
 const strategyRoute = require("./routes/strategy");
 
-// --- DIAGNOSTIC FUNCTION ---
-async function runProxyDiagnostic() {
-  console.log("[DIAGNOSTIC] Running proxy check...");
+// --- GLOBAL PROXY SETUP ---
+// yahoo-finance2 v2.13+ uses native Node.js fetch (undici), which does NOT
+// support the 'agent' option. We must use undici's setGlobalDispatcher instead.
+function setupGlobalProxy() {
   const PROXY_HOST = process.env.PROXY_HOST;
   const PROXY_PORT = process.env.PROXY_PORT;
   const PROXY_USERNAME = process.env.PROXY_USERNAME;
   const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
 
   if (!PROXY_HOST || !PROXY_PORT || !PROXY_USERNAME || !PROXY_PASSWORD) {
-    console.log("[DIAGNOSTIC] Proxy environment variables not set. Skipping proxy check.");
+    console.warn("[PROXY] ⚠️  Proxy env vars not set. Yahoo Finance may be blocked on this host.");
     return;
   }
 
   try {
+    const { ProxyAgent, setGlobalDispatcher } = require("undici");
     const proxyUrl = `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
-    const agent = new HttpsProxyAgent(proxyUrl);
-    const response = await fetch("https://httpbin.org/ip", { agent });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    console.log(`[DIAGNOSTIC] Proxy is active. Outgoing IP address: ${data.origin}`);
-  } catch (error) {
-    console.error("[DIAGNOSTIC] Error during proxy check:", error.message);
-    console.error("[DIAGNOSTIC] This may indicate a problem with the proxy server or network configuration.");
+    const proxyAgent = new ProxyAgent(proxyUrl);
+    setGlobalDispatcher(proxyAgent);
+    console.log(`[PROXY] ✅ Global undici dispatcher set → ${PROXY_HOST}:${PROXY_PORT}`);
+  } catch (err) {
+    console.error("[PROXY] ❌ Failed to set global proxy dispatcher:", err.message);
   }
 }
+
+// Apply proxy before any routes are loaded
+setupGlobalProxy();
+
 
 const app = express();
 
@@ -65,8 +65,4 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5001;
-
-// Run diagnostics before starting the server
-runProxyDiagnostic().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
-});
+app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
