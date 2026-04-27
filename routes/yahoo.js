@@ -44,7 +44,10 @@ router.get("/test-proxy", async (req, res) => {
       result.yahooTest = { success: false, quoteReturned: JSON.stringify(quote).substring(0, 200) };
     }
   } catch (err) {
+    // Surface the full error cause chain - "fetch failed" hides the real reason
     result.yahooRawError = err.message;
+    result.yahooRealCause = err.cause?.message || err.cause?.code || String(err.cause) || "no cause";
+    result.yahooErrorCode = err.cause?.code || null;
     result.yahooTest = { success: false };
   }
 
