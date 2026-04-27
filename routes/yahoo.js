@@ -2,7 +2,6 @@ const express = require("express");
 const { fetchStockData, getCurrentPrice } = require("../lib/fetchStock");
 const { getUpstoxClient } = require("../lib/upstox-client");
 const cache = require("../lib/cache");
-const { HttpsProxyAgent } = require("https-proxy-agent");
 const router = express.Router();
 
 // GET /api/yahoo/test-proxy - Diagnose proxy and Yahoo Finance connectivity
@@ -18,25 +17,40 @@ router.get("/test-proxy", async (req, res) => {
     proxyHost: PROXY_HOST || "NOT SET",
     proxyPort: PROXY_PORT || "NOT SET",
     proxyUser: PROXY_USERNAME ? PROXY_USERNAME.substring(0, 20) + "..." : "NOT SET",
+    undiciAvailable: false,
+    globalDispatcherSet: false,
+    yahooRawError: null,
     yahooTest: null,
-    error: null
   };
 
+  // Check if undici is available and if global dispatcher is set
   try {
-    // Test actual Yahoo Finance price fetch for a known symbol
-    const prices = await getCurrentPrice(["TCS.NS"]);
-    const tcs = prices[0];
-    if (tcs && tcs.price) {
-      result.yahooTest = { success: true, symbol: "TCS.NS", price: tcs.price };
+    const undici = require("undici");
+    result.undiciAvailable = true;
+    result.globalDispatcherSet = !!(undici.getGlobalDispatcher && undici.getGlobalDispatcher()?.constructor?.name !== 'Agent');
+  } catch (e) {
+    result.undiciAvailable = false;
+    result.undiciError = e.message;
+  }
+
+  // Directly call yahoo-finance2 to capture the real underlying error
+  try {
+    const yahooFinance = require("yahoo-finance2").default;
+    yahooFinance.suppressNotices(["yahooSurvey"]);
+    const quote = await yahooFinance.quote("TCS.NS");
+    if (quote && quote.regularMarketPrice) {
+      result.yahooTest = { success: true, price: quote.regularMarketPrice };
     } else {
-      result.yahooTest = { success: false, rawResult: tcs };
+      result.yahooTest = { success: false, quoteReturned: JSON.stringify(quote).substring(0, 200) };
     }
   } catch (err) {
-    result.error = err.message;
+    result.yahooRawError = err.message;
+    result.yahooTest = { success: false };
   }
 
   res.json(result);
 });
+
 
 // POST /api/yahoo/prices
 router.post("/prices", async (req, res) => {

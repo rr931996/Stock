@@ -20,6 +20,7 @@
     "lru-cache": "^10.4.3",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
+    "undici": "^6.21.0",
     "uuid": "^14.0.0",
     "xlsx": "^0.18.5",
     "yahoo-finance2": "^2.13.3"
