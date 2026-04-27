@@ -2,7 +2,41 @@ const express = require("express");
 const { fetchStockData, getCurrentPrice } = require("../lib/fetchStock");
 const { getUpstoxClient } = require("../lib/upstox-client");
 const cache = require("../lib/cache");
+const { HttpsProxyAgent } = require("https-proxy-agent");
 const router = express.Router();
+
+// GET /api/yahoo/test-proxy - Diagnose proxy and Yahoo Finance connectivity
+router.get("/test-proxy", async (req, res) => {
+  const PROXY_HOST = process.env.PROXY_HOST;
+  const PROXY_PORT = process.env.PROXY_PORT;
+  const PROXY_USERNAME = process.env.PROXY_USERNAME;
+  const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
+
+  const proxyConfigured = !!(PROXY_HOST && PROXY_PORT && PROXY_USERNAME && PROXY_PASSWORD);
+  const result = {
+    proxyConfigured,
+    proxyHost: PROXY_HOST || "NOT SET",
+    proxyPort: PROXY_PORT || "NOT SET",
+    proxyUser: PROXY_USERNAME ? PROXY_USERNAME.substring(0, 20) + "..." : "NOT SET",
+    yahooTest: null,
+    error: null
+  };
+
+  try {
+    // Test actual Yahoo Finance price fetch for a known symbol
+    const prices = await getCurrentPrice(["TCS.NS"]);
+    const tcs = prices[0];
+    if (tcs && tcs.price) {
+      result.yahooTest = { success: true, symbol: "TCS.NS", price: tcs.price };
+    } else {
+      result.yahooTest = { success: false, rawResult: tcs };
+    }
+  } catch (err) {
+    result.error = err.message;
+  }
+
+  res.json(result);
+});
 
 // POST /api/yahoo/prices
 router.post("/prices", async (req, res) => {
