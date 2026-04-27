@@ -22,7 +22,8 @@ function setupGlobalProxy() {
 
   try {
     const { ProxyAgent, setGlobalDispatcher } = require("undici");
-    const proxyUrl = `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
+    // Port 33335 is Bright Data's SSL port — proxy connection itself must use https://
+    const proxyUrl = `https://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
     const proxyAgent = new ProxyAgent({
       uri: proxyUrl,
       // Residential proxies have higher latency — extend all timeouts to 60s
