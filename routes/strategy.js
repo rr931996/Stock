@@ -1,5 +1,17 @@
 const express = require("express");
 const router = express.Router();
+let directDispatcher;
+
+try {
+  const { Agent } = require("undici");
+  directDispatcher = new Agent({
+    connectTimeout: 60000,
+    headersTimeout: 60000,
+    bodyTimeout: 60000,
+  });
+} catch (error) {
+  console.warn("[STRATEGY] undici is not installed; database proxy requests will use default fetch settings.");
+}
 
 // Database server URL
 const DATABASE_SERVER_URL = process.env.DATABASE_SERVER_URL || "http://localhost:3001";
@@ -21,8 +33,12 @@ const proxyRequest = async (method, endpoint, body = null) => {
   try {
     const options = {
       method,
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     };
+
+    if (directDispatcher) {
+      options.dispatcher = directDispatcher;
+    }
 
     if (body) {
       options.body = JSON.stringify(body);
