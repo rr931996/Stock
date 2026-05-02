@@ -8,6 +8,94 @@ const axios = require("axios");
 const router = express.Router();
 
 const OPTIONS_CACHE_TTL = 30 * 60 * 1000; // Cache for 30 minutes
+const DATABASE_SERVER_URL = process.env.DATABASE_SERVER_URL || "http://localhost:3001";
+
+const isAuthFailure = (err) => {
+  const message = String(err?.message || "").toLowerCase();
+  return err?.response?.status === 401 || message.includes("401") || message.includes("unauthorized");
+};
+
+const clearRuntimeToken = () => {
+  delete process.env.UPSTOX_ACCESS_TOKEN;
+};
+
+const saveTokenToDatabase = async (tokenData) => {
+  try {
+    const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accessToken: tokenData.accessToken,
+        tokenType: tokenData.tokenType,
+        expiresIn: tokenData.expiresIn
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+    }
+
+    console.log("[Upstox] Token saved to database");
+    return await response.json();
+  } catch (error) {
+    console.warn("[Upstox] Could not save token to database:", error.message);
+    return null;
+  }
+};
+
+const loadTokenFromDatabase = async () => {
+  try {
+    const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`);
+
+    if (!response.ok) {
+      throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    const accessToken = result?.data?.accessToken;
+
+    if (accessToken) {
+      process.env.UPSTOX_ACCESS_TOKEN = accessToken;
+      console.log("[Upstox] Token loaded from database");
+      return accessToken;
+    }
+  } catch (error) {
+    console.warn("[Upstox] Could not load token from database:", error.message);
+  }
+
+  return null;
+};
+
+const loadTokenFromEnvFile = () => {
+  const envPath = path.join(__dirname, "../.env");
+
+  if (!fs.existsSync(envPath)) {
+    return null;
+  }
+
+  const envContent = fs.readFileSync(envPath, "utf8");
+  const envConfig = dotenv.parse(envContent);
+  Object.assign(process.env, envConfig);
+
+  if (envConfig.UPSTOX_ACCESS_TOKEN) {
+    console.log("[Upstox] Token loaded from .env file");
+    return envConfig.UPSTOX_ACCESS_TOKEN;
+  }
+
+  return null;
+};
+
+const loadPersistedToken = async () => {
+  return (await loadTokenFromDatabase()) || loadTokenFromEnvFile();
+};
+
+const getClientWithPersistedToken = async () => {
+  if (!process.env.UPSTOX_ACCESS_TOKEN) {
+    await loadPersistedToken();
+  }
+
+  return getUpstoxClient();
+};
 
 /**
  * IMPORTANT: Authentication Setup Required
@@ -80,11 +168,12 @@ router.get("/auth-callback", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
     const tokenData = await client.exchangeAuthorizationCode(code);
 
     // Update process.env immediately (works on both local and cloud/Render)
     process.env.UPSTOX_ACCESS_TOKEN = tokenData.accessToken;
+    await saveTokenToDatabase(tokenData);
 
     // Also persist to .env file if it exists (local development only)
     const envPath = path.join(__dirname, "../.env");
@@ -186,7 +275,7 @@ router.post("/options-premiums", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     // Check if authenticated
     if (!client.accessToken) {
@@ -381,7 +470,7 @@ router.post("/options-premiums", async (req, res) => {
 // GET /api/upstox/test-contracts - Debug endpoint to test option contracts endpoint
 router.get("/test-contracts", async (req, res) => {
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     if (!client.accessToken) {
       return res.status(401).json({
@@ -463,7 +552,7 @@ router.get("/nifty", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     if (!client.accessToken) {
       console.warn("[Upstox] No access token available for Nifty quote");
@@ -487,7 +576,10 @@ router.get("/nifty", async (req, res) => {
     console.error("[Upstox] Full error:", err);
 
     // Determine appropriate status code
-    const statusCode = err.response?.status === 401 ? 401 : 503;
+    const statusCode = isAuthFailure(err) ? 401 : 503;
+    if (statusCode === 401) {
+      clearRuntimeToken();
+    }
 
     res.status(statusCode).json({
       error: "Failed to fetch Nifty 50 price from Upstox",
@@ -511,7 +603,7 @@ router.get("/option-expirations", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     // Check authentication first
     if (!client.accessToken) {
@@ -534,7 +626,10 @@ router.get("/option-expirations", async (req, res) => {
     console.error("[Upstox] Error fetching option expirations:", err.message);
 
     // Check if it's an auth error from the API
-    const statusCode = err.message.includes('401') || err.message.includes('unauthorized') ? 401 : 503;
+    const statusCode = isAuthFailure(err) ? 401 : 503;
+    if (statusCode === 401) {
+      clearRuntimeToken();
+    }
 
     res.status(statusCode).json({
       error: "Failed to fetch option expirations",
@@ -549,7 +644,7 @@ router.get("/option-expirations", async (req, res) => {
 // GET /api/upstox/test-option - Test endpoint to debug option premiums
 router.get("/test-option", async (req, res) => {
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     if (!client.accessToken) {
       return res.status(401).json({ error: "Not authenticated" });
@@ -621,7 +716,7 @@ router.get("/test-option", async (req, res) => {
 // GET /api/upstox/test-option-chain - Fetch actual option chain to see real instrument keys
 router.get("/test-option-chain", async (req, res) => {
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     if (!client.accessToken) {
       return res.status(401).json({ error: "Not authenticated" });
@@ -704,24 +799,13 @@ router.get("/test-option-chain", async (req, res) => {
   }
 });
 
-// GET /api/upstox/refresh-token - Reload token from .env file
-router.get("/refresh-token", (req, res) => {
+// GET /api/upstox/refresh-token - Reload token from database first, then .env file
+router.get("/refresh-token", async (req, res) => {
   try {
-    // Read and reload .env file
-    const envPath = path.join(__dirname, "../.env");
-
-    if (fs.existsSync(envPath)) {
-      const envContent = fs.readFileSync(envPath, "utf8");
-      const envConfig = dotenv.parse(envContent);
-
-      // Update process.env with the latest values from .env
-      Object.assign(process.env, envConfig);
-
-      console.log("[Upstox] Environment variables refreshed from .env file");
-    }
+    await loadPersistedToken();
 
     // Now check the status with the refreshed environment
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
     const hasToken = !!client.accessToken;
     const hasCredentials = !!(client.apiKey && client.apiSecret);
 
@@ -729,7 +813,7 @@ router.get("/refresh-token", (req, res) => {
       authenticated: hasToken,
       hasCredentials,
       message: hasToken
-        ? "Upstox API is authenticated and ready to use"
+        ? "Upstox API token is available and ready to try"
         : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
@@ -742,9 +826,9 @@ router.get("/refresh-token", (req, res) => {
 });
 
 // GET /api/upstox/status - Check Upstox API authentication status
-router.get("/status", (req, res) => {
+router.get("/status", async (req, res) => {
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
     const hasToken = !!client.accessToken;
     const hasCredentials = !!(client.apiKey && client.apiSecret);
 
@@ -752,7 +836,7 @@ router.get("/status", (req, res) => {
       authenticated: hasToken,
       hasCredentials,
       message: hasToken
-        ? "Upstox API is authenticated and ready to use"
+        ? "Upstox API token is available and ready to try"
         : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
@@ -774,7 +858,7 @@ router.get("/historical", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     const today = new Date();
     const toDate = today.toISOString().split('T')[0];
@@ -818,7 +902,7 @@ router.get("/option-chain", async (req, res) => {
   }
 
   try {
-    const client = getUpstoxClient();
+    const client = await getClientWithPersistedToken();
 
     if (!client.accessToken) {
       console.warn("[Upstox] No access token available for option chain");
@@ -926,12 +1010,10 @@ router.get("/option-chain", async (req, res) => {
     let statusCode = 503; // Default to service unavailable
     let message = "Service temporarily unavailable";
 
-    if (err.message.includes('401') || err.message.includes('Unauthorized')) {
+    if (isAuthFailure(err)) {
       statusCode = 401;
       message = "Authentication failed - please re-authenticate";
-    } else if (err.response?.status === 401) {
-      statusCode = 401;
-      message = "Authentication failed - please re-authenticate";
+      clearRuntimeToken();
     }
 
     res.status(statusCode).json({
