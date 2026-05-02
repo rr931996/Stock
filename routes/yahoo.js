@@ -1,8 +1,38 @@
 const express = require("express");
 const { fetchStockData, getCurrentPrice } = require("../lib/fetchStock");
 const { getUpstoxClient } = require("../lib/upstox-client");
+const { fetchUpstoxCurrentPrices, fetchUpstoxHistoricalData } = require("../lib/upstox-market-data");
 const cache = require("../lib/cache");
 const router = express.Router();
+
+const getFailedPriceSymbols = (symbols, results = []) => {
+  const resultsBySymbol = new Map(results.map((item) => [item.symbol, item]));
+  return symbols.filter((symbol) => {
+    const item = resultsBySymbol.get(symbol);
+    return !item || item.error || item.price == null;
+  });
+};
+
+const mergePriceResults = (symbols, yahooResults = [], upstoxResults = []) => {
+  const yahooBySymbol = new Map(yahooResults.map((item) => [item.symbol, item]));
+  const upstoxBySymbol = new Map(upstoxResults.map((item) => [item.symbol, item]));
+
+  return symbols.map((symbol) => {
+    const yahooItem = yahooBySymbol.get(symbol);
+    if (yahooItem && !yahooItem.error && yahooItem.price != null) {
+      return yahooItem;
+    }
+
+    return upstoxBySymbol.get(symbol) || yahooItem || { symbol, error: "No price data found" };
+  });
+};
+
+const getSymbolsMissingHistoricalData = (symbols, data = [], errors = []) => {
+  const symbolsWithData = new Set(data.map((item) => item.symbol));
+  const symbolsWithErrors = new Set(errors.map((item) => item.symbol));
+
+  return symbols.filter((symbol) => !symbolsWithData.has(symbol) || symbolsWithErrors.has(symbol));
+};
 
 // GET /api/yahoo/test-proxy - Diagnose proxy and Yahoo Finance connectivity
 router.get("/test-proxy", async (req, res) => {
@@ -67,7 +97,20 @@ router.post("/prices", async (req, res) => {
   const uniqueSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
 
   try {
-    const results = await getCurrentPrice(uniqueSymbols);
+    let results = await getCurrentPrice(uniqueSymbols);
+    const failedSymbols = getFailedPriceSymbols(uniqueSymbols, results);
+    let usedUpstoxFallback = false;
+
+    if (failedSymbols.length > 0) {
+      try {
+        console.warn(`[Yahoo] Price data missing for ${failedSymbols.join(", ")}. Trying Upstox fallback.`);
+        const upstoxResults = await fetchUpstoxCurrentPrices(failedSymbols);
+        results = mergePriceResults(uniqueSymbols, results, upstoxResults);
+        usedUpstoxFallback = upstoxResults.some((item) => item.price != null);
+      } catch (fallbackErr) {
+        console.error(`[Upstox Fallback] Price fallback failed for ${failedSymbols.join(", ")}:`, fallbackErr.message);
+      }
+    }
 
     // Log cache hits for observability
     const cacheHits = uniqueSymbols.filter(
@@ -77,15 +120,21 @@ router.post("/prices", async (req, res) => {
       console.log(`[CACHE] Hit for symbols: ${cacheHits.join(", ")}`);
     }
 
-    const responsePayload = { source: "Yahoo Finance", data: results };
+    const responsePayload = {
+      source: usedUpstoxFallback ? "Yahoo Finance + Upstox fallback" : "Yahoo Finance",
+      data: results
+    };
   
     res.json(responsePayload);
   } catch (err) {
     console.error(`Error processing /prices for ${uniqueSymbols.join(", ")}:`, err);
-    // The withRetry utility will have already handled 429s.
-    // Any error reaching this point is either a different kind of API error
-    // or a genuine internal server error.
-    res.status(500).json({ error: "An internal server error occurred.", details: err.message });
+    try {
+      const upstoxResults = await fetchUpstoxCurrentPrices(uniqueSymbols);
+      return res.json({ source: "Upstox fallback", data: mergePriceResults(uniqueSymbols, [], upstoxResults) });
+    } catch (fallbackErr) {
+      console.error(`[Upstox Fallback] Price fallback failed after Yahoo error:`, fallbackErr.message);
+      res.status(500).json({ error: "An internal server error occurred.", details: err.message });
+    }
   }
 });
 
@@ -102,15 +151,46 @@ router.post("/historical", async (req, res) => {
   const uniqueSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
 
   try {
-    const { data, errors } = await fetchStockData(uniqueSymbols);
-    const responsePayload = { source: "Yahoo Finance Bulk", data, errors };
+    let { data, errors } = await fetchStockData(uniqueSymbols);
+    const failedSymbols = getSymbolsMissingHistoricalData(uniqueSymbols, data, errors);
+    let usedUpstoxFallback = false;
+
+    if (failedSymbols.length > 0) {
+      try {
+        console.warn(`[Yahoo] Historical data missing for ${failedSymbols.join(", ")}. Trying Upstox fallback.`);
+        const fallback = await fetchUpstoxHistoricalData(failedSymbols);
+        const fallbackSymbols = new Set(fallback.data.map((item) => item.symbol));
+
+        data = [
+          ...data.filter((item) => !fallbackSymbols.has(item.symbol)),
+          ...fallback.data
+        ];
+        errors = [
+          ...errors.filter((item) => !fallbackSymbols.has(item.symbol)),
+          ...fallback.errors
+        ];
+        usedUpstoxFallback = fallback.data.length > 0;
+      } catch (fallbackErr) {
+        console.error(`[Upstox Fallback] Historical fallback failed for ${failedSymbols.join(", ")}:`, fallbackErr.message);
+      }
+    }
+
+    const responsePayload = {
+      source: usedUpstoxFallback ? "Yahoo Finance Bulk + Upstox fallback" : "Yahoo Finance Bulk",
+      data,
+      errors
+    };
 
     res.json(responsePayload);
   } catch (err) {
     console.error(`Error processing /historical for ${uniqueSymbols.join(", ")}:`, err);
-    // The withRetry utility will have already handled 429s.
-    // Any error reaching this point is a genuine internal server error.
-    res.status(500).json({ error: "An internal server error occurred.", details: err.message });
+    try {
+      const fallback = await fetchUpstoxHistoricalData(uniqueSymbols);
+      return res.json({ source: "Upstox fallback", data: fallback.data, errors: fallback.errors });
+    } catch (fallbackErr) {
+      console.error(`[Upstox Fallback] Historical fallback failed after Yahoo error:`, fallbackErr.message);
+      res.status(500).json({ error: "An internal server error occurred.", details: err.message });
+    }
   }
 });
 
