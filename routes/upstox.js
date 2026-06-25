@@ -19,48 +19,77 @@ const clearRuntimeToken = () => {
   delete process.env.UPSTOX_ACCESS_TOKEN;
 };
 
-const saveTokenToDatabase = async (tokenData) => {
-  try {
-    const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accessToken: tokenData.accessToken,
-        tokenType: tokenData.tokenType,
-        expiresIn: tokenData.expiresIn
-      })
-    });
+const saveTokenToDatabase = async (tokenData, retries = 3, delay = 5000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`[Upstox] Saving token to database (attempt ${i + 1}/${retries})...`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+      
+      const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: tokenData.accessToken,
+          tokenType: tokenData.tokenType,
+          expiresIn: tokenData.expiresIn
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+      }
+
+      console.log("[Upstox] Token saved to database successfully");
+      return await response.json();
+    } catch (error) {
+      console.warn(`[Upstox] Attempt ${i + 1} to save token to database failed:`, error.message);
+      if (i < retries - 1) {
+        console.log(`[Upstox] Waiting ${delay / 1000} seconds for database server to wake up...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-
-    console.log("[Upstox] Token saved to database");
-    return await response.json();
-  } catch (error) {
-    console.warn("[Upstox] Could not save token to database:", error.message);
-    return null;
   }
+  return null;
 };
 
-const loadTokenFromDatabase = async () => {
-  try {
-    const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`);
+const loadTokenFromDatabase = async (retries = 3, delay = 5000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`[Upstox] Loading token from database (attempt ${i + 1}/${retries})...`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+      
+      const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`, { 
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Database server error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const accessToken = result?.data?.accessToken;
+
+      if (accessToken) {
+        process.env.UPSTOX_ACCESS_TOKEN = accessToken;
+        console.log("[Upstox] Token loaded from database successfully");
+        return accessToken;
+      }
+      
+      // If we got a successful response but no token exists
+      break;
+    } catch (error) {
+      console.warn(`[Upstox] Attempt ${i + 1} to load token from database failed:`, error.message);
+      if (i < retries - 1) {
+        console.log(`[Upstox] Waiting ${delay / 1000} seconds for database server to wake up...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-
-    const result = await response.json();
-    const accessToken = result?.data?.accessToken;
-
-    if (accessToken) {
-      process.env.UPSTOX_ACCESS_TOKEN = accessToken;
-      console.log("[Upstox] Token loaded from database");
-      return accessToken;
-    }
-  } catch (error) {
-    console.warn("[Upstox] Could not load token from database:", error.message);
   }
 
   return null;
