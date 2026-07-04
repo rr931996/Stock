@@ -1,5 +1,6 @@
 const express = require("express");
 const { getUpstoxClient } = require("../lib/upstox-client");
+const { fetchUpstoxCurrentPrices, fetchUpstoxHistoricalData } = require("../lib/upstox-market-data");
 const cache = require("../lib/cache");
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -8,7 +9,7 @@ const axios = require("axios");
 const router = express.Router();
 
 const OPTIONS_CACHE_TTL = 30 * 60 * 1000; // Cache for 30 minutes
-const DATABASE_SERVER_URL = process.env.DATABASE_SERVER_URL || "http://localhost:3001";
+const DATABASE_SERVER_URL = process.env.DATABASE_SERVER_URL || "https://database-9u2b.onrender.com";
 
 let isDbAvailable = true;
 let lastDbError = null;
@@ -71,15 +72,16 @@ const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
       });
       clearTimeout(timeoutId);
 
+      // If we got any response back (even an error status), the database server is awake
+      isDbAvailable = true;
+      lastDbError = null;
+
       if (!response.ok) {
         throw new Error(`Database server error: ${response.status} ${response.statusText}`);
       }
 
       const result = await response.json();
       const accessToken = result?.data?.accessToken;
-
-      isDbAvailable = true;
-      lastDbError = null;
 
       if (accessToken) {
         process.env.UPSTOX_ACCESS_TOKEN = accessToken;
@@ -91,8 +93,12 @@ const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
       break;
     } catch (error) {
       console.warn(`[Upstox] Attempt ${i + 1} to load token from database failed:`, error.message);
-      isDbAvailable = false;
+      
+      // Only set dbAvailable to false if it's a network/timeout error, not an HTTP response error
+      const isHttpError = error.message.includes("Database server error:");
+      isDbAvailable = isHttpError;
       lastDbError = error.message;
+
       if (i < retries - 1) {
         console.log(`[Upstox] Waiting ${delay / 1000} seconds for database server to wake up...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -1067,6 +1073,53 @@ router.get("/option-chain", async (req, res) => {
       expiryDate,
       symbol
     });
+  }
+});
+
+// POST /api/upstox/prices - Fetch current prices for multiple symbols using Upstox
+router.post("/prices", async (req, res) => {
+  const { symbols } = req.body;
+  if (!Array.isArray(symbols) || symbols.length === 0) {
+    return res
+      .status(400)
+      .json({ error: "Request body must be an array of stock symbols." });
+  }
+
+  const uniqueSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
+
+  try {
+    const results = await fetchUpstoxCurrentPrices(uniqueSymbols);
+    res.json({
+      source: "Upstox",
+      data: results
+    });
+  } catch (err) {
+    console.error(`Error processing bulk prices for ${uniqueSymbols.join(", ")}:`, err.message);
+    res.status(500).json({ error: "An internal server error occurred.", details: err.message });
+  }
+});
+
+// POST /api/upstox/historical - Fetch historical data for multiple symbols using Upstox
+router.post("/historical", async (req, res) => {
+  const { symbols } = req.body;
+  if (!Array.isArray(symbols) || symbols.length === 0) {
+    return res
+      .status(400)
+      .json({ error: "Request body must be an array of stock symbols." });
+  }
+
+  const uniqueSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
+
+  try {
+    const { data, errors } = await fetchUpstoxHistoricalData(uniqueSymbols);
+    res.json({
+      source: "Upstox",
+      data,
+      errors
+    });
+  } catch (err) {
+    console.error(`Error processing bulk historical for ${uniqueSymbols.join(", ")}:`, err.message);
+    res.status(500).json({ error: "An internal server error occurred.", details: err.message });
   }
 });
 

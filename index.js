@@ -2,45 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
-const yahooRoute = require("./routes/yahoo");
 const upstoxRoute = require("./routes/upstox");
 const strategyRoute = require("./routes/strategy");
-
-// --- GLOBAL PROXY SETUP ---
-// yahoo-finance2 v2.13+ uses native Node.js fetch (undici), which does NOT
-// support the 'agent' option. We must use undici's setGlobalDispatcher instead.
-function setupGlobalProxy() {
-  const PROXY_HOST = process.env.PROXY_HOST;
-  const PROXY_PORT = process.env.PROXY_PORT;
-  const PROXY_USERNAME = process.env.PROXY_USERNAME;
-  const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
-
-  if (!PROXY_HOST || !PROXY_PORT || !PROXY_USERNAME || !PROXY_PASSWORD) {
-    console.warn("[PROXY] ⚠️  Proxy env vars not set. Yahoo Finance may be blocked on this host.");
-    return;
-  }
-
-  try {
-    const { ProxyAgent, setGlobalDispatcher } = require("undici");
-    // Port 33335 is Bright Data's SSL port — proxy connection itself must use https://
-    const proxyUrl = `https://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
-    const proxyAgent = new ProxyAgent({
-      uri: proxyUrl,
-      // Residential proxies have higher latency — extend all timeouts to 60s
-      connectTimeout: 60_000,
-      headersTimeout: 60_000,
-      bodyTimeout: 60_000,
-    });
-    setGlobalDispatcher(proxyAgent);
-    console.log(`[PROXY] ✅ Global undici dispatcher set → ${PROXY_HOST}:${PROXY_PORT} (60s timeouts)`);
-  } catch (err) {
-    console.error("[PROXY] ❌ Failed to set global proxy dispatcher:", err.message);
-  }
-}
-
-// Apply proxy before any routes are loaded
-setupGlobalProxy();
-
 
 const app = express();
 
@@ -56,8 +19,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // Routes
-app.use("/api/yahoo", yahooRoute);  // live fetch
-app.use("/api/upstox", upstoxRoute); // Upstox options data
+app.use("/api/upstox", upstoxRoute); // Upstox options and stock data
 app.use("/api/strategy", strategyRoute); // Strategy management
 
 app.get("/", (req, res) => {
