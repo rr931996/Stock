@@ -10,6 +10,9 @@ const router = express.Router();
 const OPTIONS_CACHE_TTL = 30 * 60 * 1000; // Cache for 30 minutes
 const DATABASE_SERVER_URL = process.env.DATABASE_SERVER_URL || "http://localhost:3001";
 
+let isDbAvailable = true;
+let lastDbError = null;
+
 const isAuthFailure = (err) => {
   const message = String(err?.message || "").toLowerCase();
   return err?.response?.status === 401 || message.includes("401") || message.includes("unauthorized");
@@ -55,13 +58,13 @@ const saveTokenToDatabase = async (tokenData, retries = 3, delay = 5000) => {
   return null;
 };
 
-const loadTokenFromDatabase = async (retries = 3, delay = 5000) => {
+const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
   for (let i = 0; i < retries; i++) {
     try {
       console.log(`[Upstox] Loading token from database (attempt ${i + 1}/${retries})...`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
       
       const response = await fetch(`${DATABASE_SERVER_URL}/api/upstox-token`, { 
         signal: controller.signal 
@@ -75,6 +78,9 @@ const loadTokenFromDatabase = async (retries = 3, delay = 5000) => {
       const result = await response.json();
       const accessToken = result?.data?.accessToken;
 
+      isDbAvailable = true;
+      lastDbError = null;
+
       if (accessToken) {
         process.env.UPSTOX_ACCESS_TOKEN = accessToken;
         console.log("[Upstox] Token loaded from database successfully");
@@ -85,6 +91,8 @@ const loadTokenFromDatabase = async (retries = 3, delay = 5000) => {
       break;
     } catch (error) {
       console.warn(`[Upstox] Attempt ${i + 1} to load token from database failed:`, error.message);
+      isDbAvailable = false;
+      lastDbError = error.message;
       if (i < retries - 1) {
         console.log(`[Upstox] Waiting ${delay / 1000} seconds for database server to wake up...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -791,6 +799,200 @@ router.get("/test-option-chain", async (req, res) => {
         let sampleInstrumentKeys = [];
         if (response.data?.data && Array.isArray(response.data.data)) {
           // Extract sample instrument keys from the response
+    cache.set(cacheKey, niftyData, 5 * 60 * 1000); // Cache for 5 minutes
+    console.log("[Upstox] Nifty 50 price fetched successfully");
+
+    res.json(niftyData);
+  } catch (err) {
+    console.error("[Upstox] Error fetching Nifty price:", err.message);
+    console.error("[Upstox] Full error:", err);
+
+    // Determine appropriate status code
+    const statusCode = isAuthFailure(err) ? 401 : 503;
+    if (statusCode === 401) {
+      clearRuntimeToken();
+    }
+
+    res.status(statusCode).json({
+      error: "Failed to fetch Nifty 50 price from Upstox",
+      details: err.message,
+      authenticated: false,
+      message: statusCode === 401
+        ? "Authentication failed - please re-authenticate"
+        : "Service temporarily unavailable",
+      setup: "Verify Upstox API Key and that authentication is complete at /api/upstox/auth-url"
+    });
+  }
+});
+
+// GET /api/upstox/option-expirations - Get available option expiration dates
+router.get("/option-expirations", async (req, res) => {
+  const cacheKey = `upstox:expirations`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    console.log("[Upstox] Cache hit for option expirations");
+    return res.json(cached);
+  }
+
+  try {
+    const client = await getClientWithPersistedToken();
+
+    // Check authentication first
+    if (!client.accessToken) {
+      console.warn("[Upstox] No access token for option expirations");
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "Upstox API is not authenticated",
+        authenticated: false,
+        data: []
+      });
+    }
+
+    const expirations = await client.getOptionExpirations();
+
+    cache.set(cacheKey, expirations, 60 * 60 * 1000); // Cache for 1 hour
+    console.log("[Upstox] Option expirations fetched");
+
+    res.json(expirations);
+  } catch (err) {
+    console.error("[Upstox] Error fetching option expirations:", err.message);
+
+    // Check if it's an auth error from the API
+    const statusCode = isAuthFailure(err) ? 401 : 503;
+    if (statusCode === 401) {
+      clearRuntimeToken();
+    }
+
+    res.status(statusCode).json({
+      error: "Failed to fetch option expirations",
+      details: err.message,
+      authenticated: false,
+      message: statusCode === 401 ? "Authentication failed - please re-authenticate" : "Service temporarily unavailable",
+      data: []
+    });
+  }
+});
+
+// GET /api/upstox/test-option - Test endpoint to debug option premiums
+router.get("/test-option", async (req, res) => {
+  try {
+    const client = await getClientWithPersistedToken();
+
+    if (!client.accessToken) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    // Try different possible instrument key formats
+    const testFormats = [
+      // Format 1: Current format with 2-digit year
+      'NSE_FO|NIFTY22APR2624200CE',
+
+      // Format 2: With colon instead of pipe
+      'NSE_FO:NIFTY22APR2624200CE',
+
+      // Format 3: Full year (2026)
+      'NSE_FO|NIFTY22APR2624200CE',
+
+      // Format 4: Different date format (DDMMMYY with 4-digit year)
+      'NSE_FO|NIFTY220426024200CE',
+
+      // Format 5: Underscore instead of pipe
+      'NSE_FO_NIFTY22APR2624200CE',
+
+      // Format 6: Without date prefix, just strike
+      'NSE_FO|NIFTY24200CE',
+
+      // Format 7: Year at beginning
+      'NSE_FO|NIFTY2622APR24200CE',
+    ];
+
+    console.log("[Upstox] Testing multiple option key formats...");
+
+    const results = [];
+
+    for (const format of testFormats) {
+      try {
+        const response = await client.getOptionPremiums([format]);
+        const hasData = response.data && Object.keys(response.data).length > 0;
+        results.push({
+          format,
+          success: response.status === 'success',
+          hasData,
+          dataCount: Object.keys(response.data || {}).length,
+          sampleKey: Object.keys(response.data || {})[0]
+        });
+        console.log(`[Upstox] Format ${format}: ${hasData ? 'HAS DATA' : 'empty'}`);
+      } catch (err) {
+        results.push({
+          format,
+          error: err.message
+        });
+      }
+    }
+
+    res.json({
+      results,
+      message: results.filter(r => r.hasData).length > 0
+        ? `Found working format(s)`
+        : 'No formats returned data - may need to try option/chain endpoint'
+    });
+  } catch (err) {
+    console.error("[Upstox] Test failed:", err.message);
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// GET /api/upstox/test-option-chain - Fetch actual option chain to see real instrument keys
+router.get("/test-option-chain", async (req, res) => {
+  try {
+    const client = await getClientWithPersistedToken();
+
+    if (!client.accessToken) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    console.log("[Upstox] Fetching actual option chain for Nifty...");
+
+    // Try to fetch option chain with different expiry formats
+    const today = new Date();
+    const nextWednesday = new Date(today);
+    nextWednesday.setDate(today.getDate() + (3 - today.getDay() + 7) % 7 || 7);
+
+    const day = String(nextWednesday.getDate()).padStart(2, '0');
+    const month = nextWednesday.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+    const year2digit = String(nextWednesday.getFullYear()).slice(-2);
+    const year4digit = String(nextWednesday.getFullYear());
+    const dateYYYYMMDD = nextWednesday.toISOString().split('T')[0];
+
+    const expiryFormats = [
+      { label: 'DDMMMYY', value: `${day}${month}${year2digit}` },
+      { label: 'YYYY-MM-DD', value: dateYYYYMMDD },
+      { label: 'DDMMMYYYY', value: `${day}${month}${year4digit}` },
+    ];
+
+    const chainResults = [];
+
+    for (const format of expiryFormats) {
+      try {
+        console.log(`[Upstox] Trying option chain with expiry format: ${format.label} = ${format.value}`);
+        const response = await client.axiosInstance.get('/option/chain', {
+          params: {
+            instrument_key: 'NSE_INDEX|Nifty 50',
+            expiry_date: format.value
+          },
+          headers: {
+            'Authorization': `Bearer ${client.accessToken}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        console.log(`[Upstox] Option chain response for ${format.label}:`, JSON.stringify(response.data).substring(0, 500));
+
+        let sampleInstrumentKeys = [];
+        if (response.data?.data && Array.isArray(response.data.data)) {
+          // Extract sample instrument keys from the response
           const samples = response.data.data.slice(0, 2);
           sampleInstrumentKeys = samples.map(item => ({
             strike: item.strike_price,
@@ -841,9 +1043,13 @@ router.get("/refresh-token", async (req, res) => {
     res.json({
       authenticated: hasToken,
       hasCredentials,
+      dbAvailable: isDbAvailable,
+      dbError: lastDbError,
       message: hasToken
         ? "Upstox API token is available and ready to try"
-        : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
+        : !isDbAvailable
+          ? "Database server is waking up. Please wait..."
+          : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
     console.error("[Upstox] Error refreshing token:", err.message);
@@ -864,9 +1070,13 @@ router.get("/status", async (req, res) => {
     res.json({
       authenticated: hasToken,
       hasCredentials,
+      dbAvailable: isDbAvailable,
+      dbError: lastDbError,
       message: hasToken
         ? "Upstox API token is available and ready to try"
-        : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
+        : !isDbAvailable
+          ? "Database server is waking up. Please wait..."
+          : "Upstox API requires authentication. Use /api/upstox/auth-url to get started"
     });
   } catch (err) {
     res.status(500).json({
@@ -945,7 +1155,6 @@ router.get("/option-chain", async (req, res) => {
 
     console.log(`[Upstox] Fetching option chain for ${symbol} on ${expiryDate}`);
 
-    // Call Upstox option/chain endpoint
     const response = await client.axiosInstance.get('/option/chain', {
       params: {
         instrument_key: symbol,
