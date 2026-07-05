@@ -62,9 +62,18 @@ const saveTokenToDatabase = async (tokenData, retries = 3, delay = 5000) => {
 const isTokenExpired = (createdAt) => {
   if (!createdAt) return false;
   const createdTime = new Date(createdAt).getTime();
-  const currentTime = Date.now();
-  const diffHours = (currentTime - createdTime) / (1000 * 60 * 60);
-  return diffHours >= 24;
+  const currentTime = new Date();
+  
+  // Upstox tokens expire at 3:30 AM IST every day.
+  // IST is UTC + 5:30. 3:30 AM IST corresponds to 10:00 PM (22:00) UTC of the previous day.
+  const lastExpirationUTC = new Date(currentTime);
+  lastExpirationUTC.setUTCHours(22, 0, 0, 0);
+  
+  if (currentTime < lastExpirationUTC) {
+    lastExpirationUTC.setUTCDate(lastExpirationUTC.getUTCDate() - 1);
+  }
+  
+  return createdTime < lastExpirationUTC.getTime();
 };
 
 const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
