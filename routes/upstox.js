@@ -59,6 +59,14 @@ const saveTokenToDatabase = async (tokenData, retries = 3, delay = 5000) => {
   return null;
 };
 
+const isTokenExpired = (createdAt) => {
+  if (!createdAt) return false;
+  const createdTime = new Date(createdAt).getTime();
+  const currentTime = Date.now();
+  const diffHours = (currentTime - createdTime) / (1000 * 60 * 60);
+  return diffHours >= 24;
+};
+
 const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
   for (let i = 0; i < retries; i++) {
     try {
@@ -82,9 +90,18 @@ const loadTokenFromDatabase = async (retries = 1, delay = 2000) => {
 
       const result = await response.json();
       const accessToken = result?.data?.accessToken;
+      const createdAt = result?.data?.createdAt;
 
       if (accessToken) {
+        if (createdAt && isTokenExpired(createdAt)) {
+          console.warn("[Upstox] Stored token in database has expired (older than 24 hours).");
+          delete process.env.UPSTOX_ACCESS_TOKEN;
+          delete process.env.UPSTOX_TOKEN_CREATED_AT;
+          return null;
+        }
+
         process.env.UPSTOX_ACCESS_TOKEN = accessToken;
+        process.env.UPSTOX_TOKEN_CREATED_AT = createdAt || "";
         console.log("[Upstox] Token loaded from database successfully");
         return accessToken;
       }
@@ -121,6 +138,14 @@ const loadTokenFromEnvFile = () => {
   Object.assign(process.env, envConfig);
 
   if (envConfig.UPSTOX_ACCESS_TOKEN) {
+    const createdAt = envConfig.UPSTOX_TOKEN_CREATED_AT;
+    if (createdAt && isTokenExpired(createdAt)) {
+      console.warn("[Upstox] Stored token in .env file has expired.");
+      delete process.env.UPSTOX_ACCESS_TOKEN;
+      delete process.env.UPSTOX_TOKEN_CREATED_AT;
+      return null;
+    }
+    process.env.UPSTOX_TOKEN_CREATED_AT = createdAt || "";
     console.log("[Upstox] Token loaded from .env file");
     return envConfig.UPSTOX_ACCESS_TOKEN;
   }
@@ -133,6 +158,12 @@ const loadPersistedToken = async () => {
 };
 
 const getClientWithPersistedToken = async () => {
+  if (process.env.UPSTOX_ACCESS_TOKEN && isTokenExpired(process.env.UPSTOX_TOKEN_CREATED_AT)) {
+    console.log("[Upstox] Memory token has expired. Clearing it.");
+    delete process.env.UPSTOX_ACCESS_TOKEN;
+    delete process.env.UPSTOX_TOKEN_CREATED_AT;
+  }
+
   if (!process.env.UPSTOX_ACCESS_TOKEN) {
     await loadPersistedToken();
   }
@@ -216,6 +247,9 @@ router.get("/auth-callback", async (req, res) => {
 
     // Update process.env immediately (works on both local and cloud/Render)
     process.env.UPSTOX_ACCESS_TOKEN = tokenData.accessToken;
+    const now = new Date().toISOString();
+    process.env.UPSTOX_TOKEN_CREATED_AT = now;
+    
     await saveTokenToDatabase(tokenData);
 
     // Also persist to .env file if it exists (local development only)
@@ -228,6 +262,13 @@ router.get("/auth-callback", async (req, res) => {
         } else {
           envContent += `\nUPSTOX_ACCESS_TOKEN=${tokenData.accessToken}\n`;
         }
+
+        if (envContent.match(/^UPSTOX_TOKEN_CREATED_AT\s*=.*/m)) {
+          envContent = envContent.replace(/^UPSTOX_TOKEN_CREATED_AT\s*=.*/m, `UPSTOX_TOKEN_CREATED_AT=${now}`);
+        } else {
+          envContent += `\nUPSTOX_TOKEN_CREATED_AT=${now}\n`;
+        }
+        
         fs.writeFileSync(envPath, envContent);
         console.log("[Upstox] Token saved to .env and process.env updated");
       } catch (fsErr) {

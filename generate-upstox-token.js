@@ -61,6 +61,13 @@ app.get(REDIRECT_PATH, async (req, res) => {
       envContent += `\nUPSTOX_ACCESS_TOKEN=${accessToken}\n`;
     }
 
+    const now = new Date().toISOString();
+    if (envContent.match(/^UPSTOX_TOKEN_CREATED_AT\s*=.*/m)) {
+      envContent = envContent.replace(/^UPSTOX_TOKEN_CREATED_AT\s*=.*/m, `UPSTOX_TOKEN_CREATED_AT=${now}`);
+    } else {
+      envContent += `\nUPSTOX_TOKEN_CREATED_AT=${now}\n`;
+    }
+
     fs.writeFileSync(envPath, envContent);
     console.log("📝 Your .env file has been automatically updated with the new token.\n");
 
